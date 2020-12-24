@@ -1,4 +1,6 @@
 # graphqlc-gen-crud
+[![Go Report Card](https://goreportcard.com/badge/github.com/samlitowitz/graphqlc-gen-crud)](https://goreportcard.com/report/github.com/samlitowitz/graphqlc-gen-crud)
+[![Go Reference](https://pkg.go.dev/badge/github.com/samlitowitz/graphqlc-gen-crud.svg)](https://pkg.go.dev/github.com/samlitowitz/graphqlc-gen-crud)
 
 This is a code generator designed to work with [graphqlc](https://github.com/samlitowitz/graphqlc).
 
