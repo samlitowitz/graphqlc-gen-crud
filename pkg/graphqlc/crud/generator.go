@@ -3,13 +3,14 @@ package crud
 import (
 	"github.com/samlitowitz/graphqlc-gen-echo/pkg/graphqlc/echo"
 	"github.com/samlitowitz/graphqlc/pkg/graphqlc"
-	"path"
 )
 
 type Generator struct {
 	*echo.Generator
 
-	genFiles map[string]bool
+	config       *Config
+	crudifyTypes map[string]struct{}
+	genFiles     map[string]bool
 
 	IdentifierRemover IdentifierRemover
 }
@@ -17,16 +18,46 @@ type Generator struct {
 func New() *Generator {
 	g := new(Generator)
 	g.Generator = echo.New()
-	g.Generator.FnRenameFile = graphqlCUDAugmentFileName
 	g.IdentifierRemover = &NodeIdentifierRemover{}
 	g.LogPrefix = "graphqlc-gen-crud"
 	return g
 }
 
-func (g *Generator) CreateMutationsForToGenerateFiles() {
-	if g.genFiles == nil {
-		g.genFiles = buildGenFilesMap(g.Request.FileToGenerate)
+func (g *Generator) CommandLineArguments(parameter string) {
+	g.Generator.CommandLineArguments(parameter)
+
+	for k, v := range g.Param {
+		switch k {
+		case "config":
+			config, err := LoadConfig(v)
+			if err != nil {
+				g.Error(err)
+			}
+			g.config = config
+		}
 	}
+	if g.config == nil {
+		g.Fail("a configuration must be provided")
+	}
+}
+
+func (g *Generator) buildCrudifyTypes() {
+	g.crudifyTypes = make(map[string]struct{})
+	for _, typeName := range g.config.Crudify {
+		g.crudifyTypes[typeName] = struct{}{}
+	}
+}
+
+func (g *Generator) buildGenFiles() {
+	g.genFiles = make(map[string]bool)
+	for _, file := range g.Request.FileToGenerate {
+		g.genFiles[file] = true
+	}
+}
+
+func (g *Generator) CreateMutationsForToGenerateFiles() {
+	g.buildCrudifyTypes()
+	g.buildGenFiles()
 
 	if g.IdentifierRemover == nil {
 		g.IdentifierRemover = &NoIdentifierRemover{}
@@ -36,11 +67,9 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 		if gen, ok := g.genFiles[fd.Name]; !ok || !gen {
 			continue
 		}
-
-		if fd.Schema.Mutation == nil {
-			fd.Schema.Mutation = BuildMutationRoot()
-			fd.Objects = append(fd.Objects, fd.Schema.Mutation)
-		}
+		objects := []*graphqlc.ObjectTypeDefinitionDescriptorProto{}
+		inputObjects := []*graphqlc.InputObjectTypeDefinitionDescriptorProto{}
+		fields := []*graphqlc.FieldDefinitionDescriptorProto{}
 
 		for _, objDef := range fd.Objects {
 			if objDef.Name == fd.Schema.Query.Name {
@@ -48,6 +77,7 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 			}
 
 			if objDef.Name == fd.Schema.Mutation.Name {
+				fd.Schema.Mutation = objDef
 				continue
 			}
 
@@ -55,24 +85,36 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 				continue
 			}
 
+			if _, ok := g.crudifyTypes[objDef.Name]; !ok {
+				continue
+			}
+
 			// create, all non-identifying fields
 			createInput, createOutput, createMutation := buildCreateDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
-			fd.InputObjects = append(fd.InputObjects, createInput)
-			fd.Objects = append(fd.Objects, createOutput)
-			fd.Schema.Mutation.Fields = append(fd.Schema.Mutation.Fields, createMutation)
+			objects = append(objects, createOutput)
+			inputObjects = append(inputObjects, createInput)
+			fields = append(fields, createMutation)
 
 			// delete, identifying fields required
 			deleteInput, deleteOutput, deleteMutation := buildDeleteDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
-			fd.InputObjects = append(fd.InputObjects, deleteInput)
-			fd.Objects = append(fd.Objects, deleteOutput)
-			fd.Schema.Mutation.Fields = append(fd.Schema.Mutation.Fields, deleteMutation)
+			objects = append(objects, deleteOutput)
+			inputObjects = append(inputObjects, deleteInput)
+			fields = append(fields, deleteMutation)
 
 			// update, all non-identifying fields optional, identifying fields required
 			updateInput, updateOutput, updateMutation := buildUpdateDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
-			fd.InputObjects = append(fd.InputObjects, updateInput)
-			fd.Objects = append(fd.Objects, updateOutput)
-			fd.Schema.Mutation.Fields = append(fd.Schema.Mutation.Fields, updateMutation)
+			objects = append(objects, updateOutput)
+			inputObjects = append(inputObjects, updateInput)
+			fields = append(fields, updateMutation)
 		}
+
+		if fd.Schema.Mutation == nil {
+			fd.Schema.Mutation = BuildMutationRoot()
+			fd.Objects = append(fd.Objects, fd.Schema.Mutation)
+		}
+		fd.InputObjects = append(fd.InputObjects, inputObjects...)
+		fd.Objects = append(fd.Objects, objects...)
+		fd.Schema.Mutation.Fields = append(fd.Schema.Mutation.Fields, fields...)
 	}
 }
 
@@ -182,17 +224,6 @@ func buildMutation(name string, input *graphqlc.InputObjectTypeDefinitionDescrip
 	}
 }
 
-func (g *Generator) CreateMutationOutputTypesForToGenerateFiles() {
-	if g.genFiles == nil {
-		g.genFiles = buildGenFilesMap(g.Request.FileToGenerate)
-	}
-	for _, fd := range g.Request.GraphqlFile {
-		if gen, ok := g.genFiles[fd.Name]; !ok || !gen {
-			continue
-		}
-	}
-}
-
 type IdentifierRemover interface {
 	RemoveInterfaces([]*graphqlc.InterfaceTypeDefinitionDescriptorProto) []*graphqlc.InterfaceTypeDefinitionDescriptorProto
 	RemoveIdentifierFields([]*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto
@@ -241,21 +272,4 @@ func (nir *NodeIdentifierRemover) RemoveNonIdentifierFields(fields []*graphqlc.F
 		fieldNamesMap[field.Name] = 0x00
 	}
 	return RemoveFieldDefByNames(fields, fieldNamesMap)
-}
-
-func buildGenFilesMap(filesToGenerate []string) map[string]bool {
-	genFiles := make(map[string]bool)
-	for _, file := range filesToGenerate {
-		genFiles[file] = true
-	}
-	return genFiles
-}
-
-func graphqlCUDAugmentFileName(name string) string {
-	if ext := path.Ext(name); ext == ".graphql" {
-		name = name[:len(name)-len(ext)]
-	}
-	name += ".crud.graphql"
-
-	return name
 }

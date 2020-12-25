@@ -1,0 +1,47 @@
+schema {
+    query: MyQuery
+    mutation: MyMutation
+}
+
+type MyQuery {
+    items(first: Int, after: String!, last: Int, before: String!): ItemConnection
+    node(id: ID!): Node!
+}
+
+type MyMutation {}
+
+type User implements Node {
+    name: String!
+    id: ID!
+}
+
+type Cart implements Node {
+    user: User!
+    items: [Item!]!
+    id: ID!
+}
+
+type Item implements Node {
+    name: String!
+    description: String!
+    id: ID!
+}
+
+type PageInfo {
+    hasPreviousPage: Boolean!
+    hasNextPage: Boolean!
+}
+
+type ItemEdge {
+    node: Item
+    cursor: String!
+}
+
+type ItemConnection {
+    edge: [ItemEdge]
+    PageInfo: PageInfo!
+}
+
+interface Node {
+    id: ID!
+}

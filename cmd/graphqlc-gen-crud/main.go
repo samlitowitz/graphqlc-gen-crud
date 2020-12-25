@@ -24,6 +24,7 @@ func main() {
 		g.Fail("no files to generate")
 	}
 
+	g.CommandLineArguments(g.Request.Parameter)
 	g.CreateMutationsForToGenerateFiles()
 	g.GenerateSchemaFiles()
 

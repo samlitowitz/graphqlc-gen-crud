@@ -13,7 +13,17 @@ Install [graphqlc](https://github.com/samlitowitz/graphqlc).
 `go get -u github.com/samlitowitz/graphqlc-gen-crud/cmd/graphqlc-gen-crud`
 
 # Usage
+Fields named `id` are treated as the identifying field when building CUD operation inputs and outputs.
 
+```json
+{
+  "crudify": [
+    "User",
+    "Cart",
+    "Item"
+  ]
+}
+```
 
 ## Parameters
   * config, required, name of crud configuration file as defined directly above,

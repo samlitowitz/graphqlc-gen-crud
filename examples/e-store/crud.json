@@ -1,0 +1,7 @@
+{
+  "crudify": [
+    "User",
+    "Cart",
+    "Item"
+  ]
+}
