@@ -103,37 +103,3 @@ func RemoveNonNullFromFieldDefs(fields []*core.FieldDefinitionDescriptorProto) [
 	}
 	return fields
 }
-
-func RemoveFieldDefByNames(fields []*core.FieldDefinitionDescriptorProto, names map[string]byte) []*core.FieldDefinitionDescriptorProto {
-	var fieldLen = len(fields)
-	for i := 0; i < fieldLen; i++ {
-		if _, ok := names[fields[i].Name]; !ok {
-			continue
-		}
-
-		// Remove field
-		fields = append(fields[:i], fields[i+1:]...)
-		// Re-calculate number of fields in object
-		fieldLen = len(fields)
-		// Keep i the same, i = i - 1 + 1
-		i--
-	}
-	return fields
-}
-
-func RemoveInterfacesDefbyName(ifaces []*core.InterfaceTypeDefinitionDescriptorProto, name string) []*core.InterfaceTypeDefinitionDescriptorProto {
-	var ifacesLen = len(ifaces)
-	for i := 0; i < ifacesLen; i++ {
-		if ifaces[i].Name != name {
-			continue
-		}
-
-		// Remove field
-		ifaces = append(ifaces[:i], ifaces[i+1:]...)
-		// Re-calculate number of fields in object
-		ifacesLen = len(ifaces)
-		// Keep i the same, i = i - 1 + 1
-		i--
-	}
-	return ifaces
-}

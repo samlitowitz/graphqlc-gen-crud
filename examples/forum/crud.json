@@ -1,0 +1,32 @@
+{
+  "types": {
+    "Post": {
+      "identifier": "id",
+      "create": {
+        "input": {
+          "fieldMap": {
+            "author": {
+              "name": "authorId",
+              "type": "User",
+              "field": "id"
+            }
+          },
+          "skip": [
+            "createdAt",
+            "replies"
+          ]
+        }
+      },
+      "update": {
+        "input": {
+          "skip": [
+            "author",
+            "createdAt",
+            "replies",
+            "title"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -3,22 +3,19 @@ package crud
 import (
 	"github.com/samlitowitz/graphqlc-gen-echo/pkg/graphqlc/echo"
 	"github.com/samlitowitz/graphqlc/pkg/graphqlc"
+	"strings"
 )
 
 type Generator struct {
 	*echo.Generator
 
-	config       *Config
-	crudifyTypes map[string]struct{}
-	genFiles     map[string]bool
-
-	IdentifierRemover IdentifierRemover
+	config   *Config
+	genFiles map[string]bool
 }
 
 func New() *Generator {
 	g := new(Generator)
 	g.Generator = echo.New()
-	g.IdentifierRemover = &NodeIdentifierRemover{}
 	g.LogPrefix = "graphqlc-gen-crud"
 	return g
 }
@@ -31,7 +28,7 @@ func (g *Generator) CommandLineArguments(parameter string) {
 		case "config":
 			config, err := LoadConfig(v)
 			if err != nil {
-				g.Error(err)
+				g.Error(err, "failed to load configuration")
 			}
 			g.config = config
 		}
@@ -41,11 +38,62 @@ func (g *Generator) CommandLineArguments(parameter string) {
 	}
 }
 
-func (g *Generator) buildCrudifyTypes() {
-	g.crudifyTypes = make(map[string]struct{})
-	for _, typeName := range g.config.Crudify {
-		g.crudifyTypes[typeName] = struct{}{}
+func (g *Generator) buildMapSpecDefs(typeFieldMap map[string]map[string]graphqlc.FieldDefinitionDescriptorProto) {
+	for _, typeSpec := range g.config.Types {
+		typeSpec.Create.Input.SkipMap = make(map[string]struct{})
+		for _, fieldMap := range typeSpec.Create.Input.FieldMap {
+			// clear def
+			fieldMap.Def = nil
+			if _, ok := typeFieldMap[fieldMap.Type]; !ok {
+				continue
+			}
+			if _, ok := typeFieldMap[fieldMap.Type][fieldMap.Field]; !ok {
+				continue
+			}
+			fieldDef := typeFieldMap[fieldMap.Type][fieldMap.Field]
+			fieldDef.Name = fieldMap.Name
+			fieldMap.Def = &fieldDef
+		}
+		typeSpec.Delete.Input.SkipMap = make(map[string]struct{})
+		for _, typeName := range typeSpec.Delete.Input.Skip {
+			typeSpec.Delete.Input.SkipMap[typeName] = struct{}{}
+		}
+		typeSpec.Update.Input.SkipMap = make(map[string]struct{})
+		for _, typeName := range typeSpec.Update.Input.Skip {
+			typeSpec.Update.Input.SkipMap[typeName] = struct{}{}
+		}
 	}
+}
+
+func (g *Generator) buildSkipMaps() {
+	for _, typeSpec := range g.config.Types {
+		typeSpec.Create.Input.SkipMap = make(map[string]struct{})
+		for _, typeName := range typeSpec.Create.Input.Skip {
+			typeSpec.Create.Input.SkipMap[typeName] = struct{}{}
+		}
+		typeSpec.Delete.Input.SkipMap = make(map[string]struct{})
+		for _, typeName := range typeSpec.Delete.Input.Skip {
+			typeSpec.Delete.Input.SkipMap[typeName] = struct{}{}
+		}
+
+		typeSpec.Update.Input.SkipMap = make(map[string]struct{})
+		for _, typeName := range typeSpec.Update.Input.Skip {
+			typeSpec.Update.Input.SkipMap[typeName] = struct{}{}
+		}
+	}
+}
+
+func buildTypeFieldMap(objDefs []*graphqlc.ObjectTypeDefinitionDescriptorProto) map[string]map[string]graphqlc.FieldDefinitionDescriptorProto {
+	typeFieldMap := make(map[string]map[string]graphqlc.FieldDefinitionDescriptorProto)
+	for _, objDef := range objDefs {
+		if _, ok := typeFieldMap[objDef.Name]; !ok {
+			typeFieldMap[objDef.Name] = make(map[string]graphqlc.FieldDefinitionDescriptorProto)
+		}
+		for _, fieldDef := range objDef.Fields {
+			typeFieldMap[objDef.Name][fieldDef.Name] = *fieldDef
+		}
+	}
+	return typeFieldMap
 }
 
 func (g *Generator) buildGenFiles() {
@@ -56,17 +104,16 @@ func (g *Generator) buildGenFiles() {
 }
 
 func (g *Generator) CreateMutationsForToGenerateFiles() {
-	g.buildCrudifyTypes()
+	g.buildSkipMaps()
 	g.buildGenFiles()
-
-	if g.IdentifierRemover == nil {
-		g.IdentifierRemover = &NoIdentifierRemover{}
-	}
 
 	for _, fd := range g.Request.GraphqlFile {
 		if gen, ok := g.genFiles[fd.Name]; !ok || !gen {
 			continue
 		}
+
+		g.buildMapSpecDefs(buildTypeFieldMap(fd.Objects))
+
 		objects := []*graphqlc.ObjectTypeDefinitionDescriptorProto{}
 		inputObjects := []*graphqlc.InputObjectTypeDefinitionDescriptorProto{}
 		fields := []*graphqlc.FieldDefinitionDescriptorProto{}
@@ -85,24 +132,24 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 				continue
 			}
 
-			if _, ok := g.crudifyTypes[objDef.Name]; !ok {
+			if _, ok := g.config.Types[objDef.Name]; !ok {
 				continue
 			}
 
 			// create, all non-identifying fields
-			createInput, createOutput, createMutation := buildCreateDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
+			createInput, createOutput, createMutation := buildCreateDefinitions(objDef, g.config.Types[objDef.Name])
 			objects = append(objects, createOutput)
 			inputObjects = append(inputObjects, createInput)
 			fields = append(fields, createMutation)
 
 			// delete, identifying fields required
-			deleteInput, deleteOutput, deleteMutation := buildDeleteDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
+			deleteInput, deleteOutput, deleteMutation := buildDeleteDefinitions(objDef, g.config.Types[objDef.Name])
 			objects = append(objects, deleteOutput)
 			inputObjects = append(inputObjects, deleteInput)
 			fields = append(fields, deleteMutation)
 
 			// update, all non-identifying fields optional, identifying fields required
-			updateInput, updateOutput, updateMutation := buildUpdateDefinitions(objDef.Name, objDef.Fields, g.IdentifierRemover)
+			updateInput, updateOutput, updateMutation := buildUpdateDefinitions(objDef, g.config.Types[objDef.Name])
 			objects = append(objects, updateOutput)
 			inputObjects = append(inputObjects, updateInput)
 			fields = append(fields, updateMutation)
@@ -118,13 +165,39 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 	}
 }
 
-func buildCreateDefinitions(name string, fields []*graphqlc.FieldDefinitionDescriptorProto, ir IdentifierRemover) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
-	nonIdentifierFields := ir.RemoveIdentifierFields(append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...))
-	identifierFields := ir.RemoveNonIdentifierFields(append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...))
+func buildCreateDefinitions(objDef *graphqlc.ObjectTypeDefinitionDescriptorProto, typeSpec TypeSpec) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
+	inputFields := make([]*graphqlc.FieldDefinitionDescriptorProto, 0)
+	for _, fieldDef := range objDef.Fields {
+		// Skip identifier fields
+		if fieldDef.Name == typeSpec.Identifier {
+			continue
+		}
+		// Skip skip fields
+		if _, ok := typeSpec.Create.Input.SkipMap[fieldDef.Name]; ok {
+			continue
+		}
+		// replace map
+		if fieldMap, ok := typeSpec.Create.Input.FieldMap[fieldDef.Name]; ok {
+			fieldDef = fieldMap.Def
+		}
+		inputFields = append(inputFields, fieldDef)
+	}
 
-	inputDef := buildCreateInputDefinition(name, nonIdentifierFields)
-	outputDef := buildCreateOutputDefinition(name, append(identifierFields, nonIdentifierFields...))
-	return inputDef, outputDef, buildMutation("Create"+name, inputDef, outputDef)
+	inputDef := buildCreateInputDefinition(objDef.Name, inputFields)
+	outputDef := buildCreateOutputDefinition(objDef.Name, []*graphqlc.FieldDefinitionDescriptorProto{
+		{
+			Name: strings.ToLower(objDef.Name),
+			Type: &graphqlc.TypeDescriptorProto{
+				Type: &graphqlc.TypeDescriptorProto_NamedType{
+					NamedType: &graphqlc.NamedTypeDescriptorProto{
+						Name: objDef.Name,
+					},
+				},
+			},
+		},
+	})
+
+	return inputDef, outputDef, buildMutation("Create"+objDef.Name, inputDef, outputDef)
 }
 
 func buildCreateInputDefinition(typeName string, fields []*graphqlc.FieldDefinitionDescriptorProto) *graphqlc.InputObjectTypeDefinitionDescriptorProto {
@@ -141,12 +214,31 @@ func buildCreateOutputDefinition(typeName string, fields []*graphqlc.FieldDefini
 	}
 }
 
-func buildDeleteDefinitions(name string, fields []*graphqlc.FieldDefinitionDescriptorProto, ir IdentifierRemover) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
-	identifierFields := ir.RemoveNonIdentifierFields(append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...))
+func buildDeleteDefinitions(objDef *graphqlc.ObjectTypeDefinitionDescriptorProto, typeSpec TypeSpec) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
+	inputFields := make([]*graphqlc.FieldDefinitionDescriptorProto, 0)
+	for _, fieldDef := range objDef.Fields {
+		// Skip non-identifier fields
+		if fieldDef.Name != typeSpec.Identifier {
+			continue
+		}
+		inputFields = append(inputFields, fieldDef)
+	}
 
-	inputDef := buildDeleteInputDefinition(name, identifierFields)
-	outputDef := buildDeleteOutputDefinition(name, fields)
-	return inputDef, outputDef, buildMutation("Delete"+name, inputDef, outputDef)
+	inputDef := buildDeleteInputDefinition(objDef.Name, inputFields)
+	outputDef := buildDeleteOutputDefinition(objDef.Name, []*graphqlc.FieldDefinitionDescriptorProto{
+		{
+			Name: strings.ToLower(objDef.Name),
+			Type: &graphqlc.TypeDescriptorProto{
+				Type: &graphqlc.TypeDescriptorProto_NamedType{
+					NamedType: &graphqlc.NamedTypeDescriptorProto{
+						Name: objDef.Name,
+					},
+				},
+			},
+		},
+	})
+
+	return inputDef, outputDef, buildMutation("Delete"+objDef.Name, inputDef, outputDef)
 }
 
 func buildDeleteInputDefinition(typeName string, fields []*graphqlc.FieldDefinitionDescriptorProto) *graphqlc.InputObjectTypeDefinitionDescriptorProto {
@@ -163,22 +255,35 @@ func buildDeleteOutputDefinition(typeName string, fields []*graphqlc.FieldDefini
 	}
 }
 
-func buildUpdateDefinitions(name string, fields []*graphqlc.FieldDefinitionDescriptorProto, ir IdentifierRemover) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
-	identifierFields := append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...)
-	nonIdentifierFields := append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...)
-	for i, field := range fields {
-		identDef := *field
-		identifierFields[i] = &identDef
-		nonIdentDef := *field
-		nonIdentifierFields[i] = &nonIdentDef
+func buildUpdateDefinitions(objDef *graphqlc.ObjectTypeDefinitionDescriptorProto, typeSpec TypeSpec) (*graphqlc.InputObjectTypeDefinitionDescriptorProto, *graphqlc.ObjectTypeDefinitionDescriptorProto, *graphqlc.FieldDefinitionDescriptorProto) {
+	inputFields := make([]*graphqlc.FieldDefinitionDescriptorProto, 0)
+	for _, fieldDef := range objDef.Fields {
+		// Skip skip fields
+		if _, ok := typeSpec.Update.Input.SkipMap[fieldDef.Name]; ok {
+			continue
+		}
+		// replace map
+		if fieldMap, ok := typeSpec.Update.Input.FieldMap[fieldDef.Name]; ok {
+			fieldDef = fieldMap.Def
+		}
+		inputFields = append(inputFields, fieldDef)
 	}
 
-	identifierFields = AddNonNullToFieldDefs(ir.RemoveNonIdentifierFields(append([]*graphqlc.FieldDefinitionDescriptorProto(nil), identifierFields...)))
-	nonIdentifierFields = RemoveNonNullFromFieldDefs(ir.RemoveIdentifierFields(append([]*graphqlc.FieldDefinitionDescriptorProto(nil), nonIdentifierFields...)))
+	inputDef := buildUpdateInputDefinition(objDef.Name, inputFields)
+	outputDef := buildUpdateOutputDefinition(objDef.Name, []*graphqlc.FieldDefinitionDescriptorProto{
+		{
+			Name: strings.ToLower(objDef.Name),
+			Type: &graphqlc.TypeDescriptorProto{
+				Type: &graphqlc.TypeDescriptorProto_NamedType{
+					NamedType: &graphqlc.NamedTypeDescriptorProto{
+						Name: objDef.Name,
+					},
+				},
+			},
+		},
+	})
 
-	inputDef := buildUpdateInputDefinition(name, append(identifierFields, nonIdentifierFields...))
-	outputDef := buildUpdateOutputDefinition(name, append([]*graphqlc.FieldDefinitionDescriptorProto(nil), fields...))
-	return inputDef, outputDef, buildMutation("Update"+name, inputDef, outputDef)
+	return inputDef, outputDef, buildMutation("Update"+objDef.Name, inputDef, outputDef)
 }
 
 func buildUpdateInputDefinition(typeName string, fields []*graphqlc.FieldDefinitionDescriptorProto) *graphqlc.InputObjectTypeDefinitionDescriptorProto {
@@ -222,54 +327,4 @@ func buildMutation(name string, input *graphqlc.InputObjectTypeDefinitionDescrip
 			},
 		},
 	}
-}
-
-type IdentifierRemover interface {
-	RemoveInterfaces([]*graphqlc.InterfaceTypeDefinitionDescriptorProto) []*graphqlc.InterfaceTypeDefinitionDescriptorProto
-	RemoveIdentifierFields([]*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto
-	RemoveNonIdentifierFields([]*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto
-}
-
-type NoIdentifierRemover struct{}
-
-func (ni *NoIdentifierRemover) RemoveInterfaces(ifaces []*graphqlc.InterfaceTypeDefinitionDescriptorProto) []*graphqlc.InterfaceTypeDefinitionDescriptorProto {
-	return ifaces
-}
-
-func (ni *NoIdentifierRemover) RemoveIdentifierFields(fields []*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto {
-	return fields
-}
-
-func (ni *NoIdentifierRemover) RemoveNonIdentifierFields(fields []*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto {
-	return fields
-}
-
-type NodeIdentifierRemover struct{}
-
-func (nir *NodeIdentifierRemover) RemoveInterfaces(ifaces []*graphqlc.InterfaceTypeDefinitionDescriptorProto) []*graphqlc.InterfaceTypeDefinitionDescriptorProto {
-	namesMap := map[string]bool{"Node": true}
-	result := make([]*graphqlc.InterfaceTypeDefinitionDescriptorProto, 0)
-
-	for _, iface := range ifaces {
-		if _, ok := namesMap[iface.Name]; ok {
-			continue
-		}
-		result = append(result, iface)
-	}
-	return result
-}
-
-func (nir *NodeIdentifierRemover) RemoveIdentifierFields(fieldDefs []*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto {
-	return RemoveFieldDefByNames(fieldDefs, map[string]byte{"id": 0x00})
-}
-
-func (nir *NodeIdentifierRemover) RemoveNonIdentifierFields(fields []*graphqlc.FieldDefinitionDescriptorProto) []*graphqlc.FieldDefinitionDescriptorProto {
-	fieldNamesMap := make(map[string]byte)
-	for _, field := range fields {
-		if field.Name == "id" {
-			continue
-		}
-		fieldNamesMap[field.Name] = 0x00
-	}
-	return RemoveFieldDefByNames(fields, fieldNamesMap)
 }

@@ -1,26 +1,33 @@
 package crud
 
 import (
-	"encoding/json"
-	"io/ioutil"
+	"github.com/samlitowitz/graphqlc/pkg/graphqlc"
 )
 
 type Config struct {
-	Crudify []string `json:"crudify,omitempty"`
+	Types map[string]TypeSpec `json:"types,omitempty"`
 }
 
-func LoadConfig(filename string) (*Config, error) {
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
+type TypeSpec struct {
+	Identifier string         `json:"identifier,omitempty"`
+	Create     TypeInputSpec `json:"create,omitempty"`
+	Update     TypeInputSpec `json:"update,omitempty"`
+	Delete     TypeInputSpec `json:"delete,omitempty"`
+}
 
-	config := &Config{
-		Crudify:    []string{},
-	}
-	err = json.Unmarshal(data, config)
-	if err != nil {
-		return nil, err
-	}
-	return config, nil
+type TypeInputSpec struct {
+	Input InputSpec `json:"input,omitempty"`
+}
+
+type InputSpec struct {
+	FieldMap map[string]MapSpec  `json:"fieldMap,omitempty"`
+	Skip     []string            `json:"skip,omitempty"`
+	SkipMap  map[string]struct{} `json:"-"`
+}
+
+type MapSpec struct {
+	Name  string                                   `json:"name,omitempty"`
+	Type  string                                   `json:"type,omitempty"`
+	Field string                                   `json:"field,omitempty"`
+	Def   *graphqlc.FieldDefinitionDescriptorProto `json:"-"`
 }
