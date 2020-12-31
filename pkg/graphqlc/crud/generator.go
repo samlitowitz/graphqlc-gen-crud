@@ -1,6 +1,7 @@
 package crud
 
 import (
+	"github.com/golang/protobuf/proto"
 	"github.com/samlitowitz/graphqlc-gen-echo/pkg/graphqlc/echo"
 	"github.com/samlitowitz/graphqlc/pkg/graphqlc"
 	"strings"
@@ -38,35 +39,38 @@ func (g *Generator) CommandLineArguments(parameter string) {
 	}
 }
 
-func (g *Generator) buildMapSpecDefs(typeFieldMap map[string]map[string]graphqlc.FieldDefinitionDescriptorProto) {
+func (g *Generator) buildMapSpecDefs(typeFieldMap map[string]map[string]*graphqlc.FieldDefinitionDescriptorProto) {
 	for _, typeSpec := range g.config.Types {
-		typeSpec.Create.Input.SkipMap = make(map[string]struct{})
-		for _, fieldMap := range typeSpec.Create.Input.FieldMap {
+
+		//g.Fail(fmt.Sprintf("%#v\n", pretty.Formatter(typeSpec.Create.Input.FieldMap)))
+		for typ, fieldMap := range typeSpec.Create.Input.FieldMap {
 			// clear def
 			fieldMap.Def = nil
+			// no type defined in schema
 			if _, ok := typeFieldMap[fieldMap.Type]; !ok {
 				continue
 			}
+			// no field defined on type in schema
 			if _, ok := typeFieldMap[fieldMap.Type][fieldMap.Field]; !ok {
 				continue
 			}
-			fieldDef := typeFieldMap[fieldMap.Type][fieldMap.Field]
+			encodedFieldDef, err := proto.Marshal(typeFieldMap[fieldMap.Type][fieldMap.Field])
+			if err != nil {
+				g.Error(err, "failed to build create field map")
+			}
+			fieldDef := &graphqlc.FieldDefinitionDescriptorProto{}
+			if err := proto.Unmarshal(encodedFieldDef, fieldDef); err != nil {
+				g.Error(err, "failed to build create field map")
+			}
 			fieldDef.Name = fieldMap.Name
-			fieldMap.Def = &fieldDef
-		}
-		typeSpec.Delete.Input.SkipMap = make(map[string]struct{})
-		for _, typeName := range typeSpec.Delete.Input.Skip {
-			typeSpec.Delete.Input.SkipMap[typeName] = struct{}{}
-		}
-		typeSpec.Update.Input.SkipMap = make(map[string]struct{})
-		for _, typeName := range typeSpec.Update.Input.Skip {
-			typeSpec.Update.Input.SkipMap[typeName] = struct{}{}
+			fieldMap.Def = fieldDef
+			typeSpec.Create.Input.FieldMap[typ] = fieldMap
 		}
 	}
 }
 
 func (g *Generator) buildSkipMaps() {
-	for _, typeSpec := range g.config.Types {
+	for typeName, typeSpec := range g.config.Types {
 		typeSpec.Create.Input.SkipMap = make(map[string]struct{})
 		for _, typeName := range typeSpec.Create.Input.Skip {
 			typeSpec.Create.Input.SkipMap[typeName] = struct{}{}
@@ -80,17 +84,18 @@ func (g *Generator) buildSkipMaps() {
 		for _, typeName := range typeSpec.Update.Input.Skip {
 			typeSpec.Update.Input.SkipMap[typeName] = struct{}{}
 		}
+		g.config.Types[typeName] = typeSpec
 	}
 }
 
-func buildTypeFieldMap(objDefs []*graphqlc.ObjectTypeDefinitionDescriptorProto) map[string]map[string]graphqlc.FieldDefinitionDescriptorProto {
-	typeFieldMap := make(map[string]map[string]graphqlc.FieldDefinitionDescriptorProto)
+func buildTypeFieldMap(objDefs []*graphqlc.ObjectTypeDefinitionDescriptorProto) map[string]map[string]*graphqlc.FieldDefinitionDescriptorProto {
+	typeFieldMap := make(map[string]map[string]*graphqlc.FieldDefinitionDescriptorProto)
 	for _, objDef := range objDefs {
 		if _, ok := typeFieldMap[objDef.Name]; !ok {
-			typeFieldMap[objDef.Name] = make(map[string]graphqlc.FieldDefinitionDescriptorProto)
+			typeFieldMap[objDef.Name] = make(map[string]*graphqlc.FieldDefinitionDescriptorProto)
 		}
 		for _, fieldDef := range objDef.Fields {
-			typeFieldMap[objDef.Name][fieldDef.Name] = *fieldDef
+			typeFieldMap[objDef.Name][fieldDef.Name] = fieldDef
 		}
 	}
 	return typeFieldMap
@@ -132,24 +137,25 @@ func (g *Generator) CreateMutationsForToGenerateFiles() {
 				continue
 			}
 
-			if _, ok := g.config.Types[objDef.Name]; !ok {
+			typeSpec, ok := g.config.Types[objDef.Name]
+			if !ok {
 				continue
 			}
 
 			// create, all non-identifying fields
-			createInput, createOutput, createMutation := buildCreateDefinitions(objDef, g.config.Types[objDef.Name])
+			createInput, createOutput, createMutation := buildCreateDefinitions(objDef, typeSpec)
 			objects = append(objects, createOutput)
 			inputObjects = append(inputObjects, createInput)
 			fields = append(fields, createMutation)
 
 			// delete, identifying fields required
-			deleteInput, deleteOutput, deleteMutation := buildDeleteDefinitions(objDef, g.config.Types[objDef.Name])
+			deleteInput, deleteOutput, deleteMutation := buildDeleteDefinitions(objDef, typeSpec)
 			objects = append(objects, deleteOutput)
 			inputObjects = append(inputObjects, deleteInput)
 			fields = append(fields, deleteMutation)
 
 			// update, all non-identifying fields optional, identifying fields required
-			updateInput, updateOutput, updateMutation := buildUpdateDefinitions(objDef, g.config.Types[objDef.Name])
+			updateInput, updateOutput, updateMutation := buildUpdateDefinitions(objDef, typeSpec)
 			objects = append(objects, updateOutput)
 			inputObjects = append(inputObjects, updateInput)
 			fields = append(fields, updateMutation)
