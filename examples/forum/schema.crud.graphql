@@ -1,0 +1,134 @@
+schema {
+  query: MyQuery
+  mutation: MyMutation
+}
+
+type MyMutation {
+  CreatePost(input: CreatePostInput!): CreatePostOutput
+  DeletePost(input: DeletePostInput!): DeletePostOutput
+  UpdatePost(input: UpdatePostInput!): UpdatePostOutput
+}
+
+type MyQuery {
+  users(first: Int, after: String!, last: Int, before: String!): UserConnection
+  topics(first: Int, after: String!, last: Int, before: String!): TopicConnection
+  newestPosts(first: Int, after: String!, last: Int, before: String!): PostConnection
+  newestContent: [Content!]!
+  node(id: ID!): Node!
+}
+
+type User implements Node {
+  posts(first: Int, after: String!, last: Int, before: String!): PostConnection
+  role: UserRole!
+  id: ID!
+}
+
+type Topic implements Node {
+  name: String!
+  author: User!
+  createdAt: DateTime!
+  id: ID!
+}
+
+type Post implements Node {
+  author: User!
+  createdAt: DateTime!
+  replies(first: Int, after: String!, last: Int, before: String!): ReplyConnection
+  title: String!
+  message: String!
+  id: ID!
+}
+
+type Reply implements Node {
+  auther: User!
+  createdAt: DateTime!
+  replies(first: Int, after: String!, last: Int, before: String!): ReplyConnection
+  message: String!
+  id: ID!
+}
+
+type PageInfo {
+  hasPreviousPage: Boolean!
+  hasNextPage: Boolean!
+}
+
+type UserEdge {
+  node: User
+  cursor: String!
+}
+
+type UserConnection {
+  edge: [UserEdge]
+  PageInfo: PageInfo!
+}
+
+type TopicEdge {
+  node: Topic
+  cursor: String!
+}
+
+type TopicConnection {
+  edge: [TopicEdge]
+  PageInfo: PageInfo!
+}
+
+type PostEdge {
+  node: Post
+  cursor: String!
+}
+
+type PostConnection {
+  edge: [PostEdge]
+  PageInfo: PageInfo!
+}
+
+type ReplyEdge {
+  node: Reply
+  cursor: String!
+}
+
+type ReplyConnection {
+  edge: [ReplyEdge]
+  PageInfo: PageInfo!
+}
+
+type CreatePostOutput {
+  post: Post
+}
+
+type DeletePostOutput {
+  post: Post
+}
+
+type UpdatePostOutput {
+  post: Post
+}
+
+input CreatePostInput {
+  authorId: ID!
+  title: String!
+  message: String!
+}
+
+input DeletePostInput {
+  id: ID!
+}
+
+input UpdatePostInput {
+  message: String!
+  id: ID!
+}
+
+interface Node {
+  id: ID!
+}
+
+union Content = Post | Reply
+
+scalar DateTime
+
+enum UserRole {
+  ADMINISTRATOR
+  MODERATOR
+  MEMBER
+}
